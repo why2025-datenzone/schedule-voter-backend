@@ -1,0 +1,6 @@
+[submodule "frontends/admin-frontend"]
+	path = frontends/admin-frontend
+	url = https://github.com/why2025-datenzone/schedule-voter-admin-frontend.git
+[submodule "frontends/client-frontend"]
+	path = frontends/client-frontend
+	url = https://github.com/why2025-datenzone/schedule-voter-client-frontend.git
