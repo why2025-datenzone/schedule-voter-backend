@@ -1,0 +1,29 @@
+[package]
+name = "api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+askama = "0.14.0"
+axum = { version = "0.8.4", features = ["macros"] }
+axum-extra = { version = "0.10.1", features = ["typed-header"] }
+base58 = "0.2.0"
+chrono = { version = "0.4.41", features = ["serde"] }
+dotenvy = { version = "0.15.7", features = ["clap", "cli"] }
+entity = { version = "0.1.0", path = "../entity" }
+migration = { version = "0.1.0", path = "../migration" }
+openidconnect = "4.0.0"
+rand = { version = "0.9.1", features = ["std_rng"] }
+rand_chacha = { version = "0.9.0", features = ["os_rng"] }
+reqwest = { version = "0.12.20", features = ["json", "rustls-tls"] }
+serde = "1.0.219"
+serde_json = "1.0.140"
+service = { version = "0.1.0", path = "../service" }
+tokio = { version = "1.45.1", features = ["full"] }
+tower = "0.5.2"
+tower-http = { version = "0.6.6", features = ["fs", "set-header"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+url = "2.5.4"
+

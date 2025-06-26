@@ -1,0 +1,13 @@
+[package]
+name = "schedule-voter-backend-axum"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = [".", "api", "service", "migration", "entity"]
+
+[dependencies]
+api = { path = "api" }
+askama = "0.14.0"
+clap = { version = "4.5.40", features = ["derive"] }
+

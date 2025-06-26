@@ -1,0 +1,25 @@
+# .dockerignore
+
+# Git files
+.git
+.gitignore
+
+# Docker specific files
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Rust build artifacts
+target
+
+# Node build artifacts
+frontends/*/node_modules
+frontends/*/dist
+
+# Environment variables file
+.env
+
+# IDE and OS files
+.idea
+.vscode
+*.DS_Store

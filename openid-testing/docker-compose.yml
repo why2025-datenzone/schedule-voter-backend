@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest # Or a specific version like 23.0.7, 24.0.2
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: localhost # Crucial for OIDC redirects. Change if your app isn't on localhost.
+      KC_HTTP_ENABLED: 'true'
+      KC_PROXY: passthrough
+      # KC_FEATURES: declarative-user-profile
+      # KC_DB: dev-file # This is the default for 'start-dev', no need to explicitly set unless overriding.
+    ports:
+      - "127.0.0.1:8084:8080"
+      # - "8443:8443" # Uncomment if you also need HTTPS for testing
+    # Optional: Uncomment the volume if you want data to persist across container restarts.
+    # For minimal testing, the in-memory/file-based H2 from start-dev is usually fine.
+    # volumes:
+    #   - ./keycloak-data:/opt/keycloak/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/realms/master"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
