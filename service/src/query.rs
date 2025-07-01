@@ -4,7 +4,7 @@ use itertools::Itertools;
 use sea_orm::{prelude::Expr, sea_query::ExprTrait, *};
 use ::entity::{event, oidc_provider, source, submission, token, user, user_event, vote};
 use serde::{Deserialize, Serialize};
-use url::Url; // Entities
+use url::Url;
 
 use bitvec::prelude::*;
 
@@ -124,7 +124,7 @@ struct VoteAndSlug {
     expanded: Vec<String>,
     up: Vec<String>,
     down: Vec<String>,
-    slug: String, // This column comes from the `event` table
+    slug: String, 
 }
 
 
@@ -359,16 +359,6 @@ impl Query {
         return Ok(SoureceResponse {sources: res})
     }
     pub async fn get_event_overview(db: &DbConn, event: i32) -> Result<Option<EventOverview>, DbErr> {
-        // let maybe_perm = Self::get_event_perm_for_user(db, user, slug).await?;
-        // if let Some(perm) = maybe_perm {
-            // We don't need the perm, everything is fine for the overview
-            // let maybe_voting = event::Entity::find()
-            //     .filter(event::Column::Id.eq(perm.event))
-            //     .select_only()
-            //     .column(event::Column::Voting)
-            //     .into_tuple::<bool>()
-            //     .one(db)
-            //     .await?.ok_or_else(|| DbErr::Custom("Event not found".to_string()))?;
             let sources = source::Entity::find()
                 .filter(source::Column::Event.eq(event))
                 .count(db)
@@ -386,7 +376,6 @@ impl Query {
                 .count(db)
                 .await?;
             let res = EventOverview {
-                // voting: maybe_voting,
                 sources: sources as i32,
                 submissions: submissions as i32,
                 votes: votes as i32,
@@ -395,33 +384,16 @@ impl Query {
         }
 
     pub async fn get_event_perm_for_user(db: &DbConn, user: i32, slug: impl Into<String>) -> Result<Option<EventWithPerm>, DbErr> {
-        // let maybe_event = event::Entity::find().filter(event::Column::Slug.eq(slug.into())).one(db).await?;
-        // if let Some(event) = maybe_event {
-        //     let maybe_perm = event.find_related(user_event::Entity).filter(user_event::Column::User.eq(user)).one(db).await?;
-        //     match maybe_perm {
-        //         Some(perm) => Ok(Some(RoleInfo::try_from(perm.perm.as_str()).map_err(|e| DbErr::Custom(e))?)),
-        //         None => Ok(None),
-        //     }
-        // } else {
-        //     return Ok(None)
-        // }
         let maybe_perm = user_event::Entity::find()
-        // 1. Tell SeaORM we don't want the full entity.
         .select_only()
-        // 2. Specify the exact column we need.
         .column(event::Column::Id)
         .column(user_event::Column::Perm)
-        // 3. Join the `event` table to filter by its slug.
-        //    We use an INNER JOIN because we require a matching event to exist.
         .join(
             JoinType::InnerJoin,
             user_event::Relation::Event.def(),
         )
-        // 4. Apply filters to both tables.
         .filter(event::Column::Slug.eq(slug.into()))
         .filter(user_event::Column::User.eq(user))
-        // 5. Define the shape of the result. Since we selected one column of type
-        //    string, we expect a tuple containing a single String.
         .into_tuple::<(i32, String)>()
         .one(db)
         .await?;
@@ -710,9 +682,6 @@ impl Query {
         let mut conditions = Condition::any(); 
 
         for (slug, client_id) in client_ids.events.iter() {
-            // For each (slug, client_id) pair, create an AND condition:
-            // (event.slug = 'some_slug' AND vote.client = 'some_client_id')
-            // `.to_owned()` is used as `eq` expects an owned value for comparison.
             conditions = conditions.add(
                 Condition::all() 
                     .add(event::Column::Slug.eq(slug.to_owned())) 
@@ -722,34 +691,32 @@ impl Query {
 
         let votes_with_events = vote::Entity::find()
             .join(
-                JoinType::InnerJoin, // Use an inner join because we need both vote and event data.
-                vote::Relation::Event.def() // Defines the join condition based on the relation.
+                JoinType::InnerJoin,
+                vote::Relation::Event.def()
             )
-            .filter(conditions) // Apply the constructed WHERE clause.
-            .select_only() // Select only the columns specified below.
+            .filter(conditions)
+            .select_only() 
             .column(vote::Column::Client)
             .column(vote::Column::Sequence)
             .column(vote::Column::Shown)
             .column(vote::Column::Expanded)
             .column(vote::Column::Up)
             .column(vote::Column::Down)
-            .column(event::Column::Slug) // Include the slug from the event table to map results back.
-            .into_model::<VoteAndSlug>() // Map the selected columns to our helper struct.
-            .all(db) // Execute the query and collect all results.
+            .column(event::Column::Slug) 
+            .into_model::<VoteAndSlug>() 
+            .all(db) 
             .await?;
 
         let mut result_map: HashMap<String, VoteExport> = HashMap::new();
         for vote_record in votes_with_events {
-            // Create a VoteExport instance from the fetched vote data.
             let vote_export = VoteExport {
-                seq: vote_record.sequence as u32, // Cast i32 (from DB) to u32 (for export).
+                seq: vote_record.sequence as u32, 
                 client: vote_record.client,
                 up: vote_record.up,
                 down: vote_record.down,
                 shown: vote_record.shown,
                 expanded: vote_record.expanded,
             };
-            // Insert the VoteExport into the result map, keyed by the event slug.
             result_map.insert(vote_record.slug, vote_export);
         }
 
