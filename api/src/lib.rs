@@ -15,7 +15,8 @@ use migration::{
     DbErr, Migrator, MigratorTrait,
     sea_orm::{Database, DatabaseConnection},
 };
-use std::{collections::HashMap, env, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashMap, env, fmt::Display, path::PathBuf, sync::Arc, time::Duration};
+use reqwest::{header::{HeaderValue as rhv, InvalidHeaderValue}, ClientBuilder};
 
 use openidconnect::{
     AccessTokenHash, AuthorizationCode, ClientId, ClientSecret, IssuerUrl, JsonWebKeySet, Nonce,
@@ -23,7 +24,7 @@ use openidconnect::{
     core::{CoreClient, CoreProviderMetadata},
     reqwest,
 };
-use reqwest::RequestBuilder;
+use reqwest::header;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use service::{
@@ -34,7 +35,7 @@ use service::{
 use tokio::fs;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 use url::{ParseError, Url};
 
@@ -59,26 +60,44 @@ struct ServerConfig {
 
 #[derive(Debug)]
 enum UpdateError {
-    Parse(()),
-    Request(()),
-    Db(()),
+    Parse(ParseError),
+    Request(reqwest::Error),
+    Db(DbErr),
+    HeaderValue(InvalidHeaderValue),
+}
+
+impl Display for UpdateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UpdateError::Parse(parse_error) => f.write_fmt(format_args!("UpdateError ParsingError: {:#?}", parse_error)),
+            UpdateError::Request(error) => f.write_fmt(format_args!("UpdateError RequestError: {:#?}", error)),
+            UpdateError::Db(db_err) => f.write_fmt(format_args!("UpdateError DatabaseError: {:#?}", db_err)),
+            UpdateError::HeaderValue(invalid_header_value) => f.write_fmt(format_args!("UpdateError InvalidHeaderValue: {:#?}", invalid_header_value)),
+        }
+    }
 }
 
 impl From<ParseError> for UpdateError {
-    fn from(_value: ParseError) -> Self {
-        Self::Parse(())
+    fn from(value: ParseError) -> Self {
+        Self::Parse(value)
     }
 }
 
 impl From<DbErr> for UpdateError {
-    fn from(_value: DbErr) -> Self {
-        Self::Db(())
+    fn from(value: DbErr) -> Self {
+        Self::Db(value)
     }
 }
 
 impl From<reqwest::Error> for UpdateError {
-    fn from(_value: reqwest::Error) -> Self {
-        Self::Request(())
+    fn from(value: reqwest::Error) -> Self {
+        Self::Request(value)
+    }
+}
+
+impl From<InvalidHeaderValue> for UpdateError {
+    fn from(value: InvalidHeaderValue) ->  Self {
+        Self::HeaderValue(value)
     }
 }
 
@@ -94,8 +113,15 @@ struct ManualUpdateRequest {
     schedule: Option<HashMap<String, SubmissionStartEnd>>,
 }
 
-fn add_auth(rb: RequestBuilder, token: &String) -> RequestBuilder {
-    rb.header("Authorization", format!("Token {}", token))
+fn clientbuilder_with_auth(token: &String) -> Result<ClientBuilder,InvalidHeaderValue> {
+    let mut headers = header::HeaderMap::new();
+
+    let mut auth_value = rhv::from_str(format!("token {}", token).as_str())?;
+    auth_value.set_sensitive(true);
+    headers.insert(header::AUTHORIZATION, auth_value);
+
+    Ok(reqwest::Client::builder()
+    .default_headers(headers))
 }
 
 async fn update_source(db: &DbConn, source: SourceToUpdate) -> Result<(), UpdateError> {
@@ -111,17 +137,26 @@ async fn update_source(db: &DbConn, source: SourceToUpdate) -> Result<(), Update
         )
         .as_str(),
     )?;
+    let on_https = url.scheme() == "https";
     let mut all_submissions = vec![];
     loop {
         debug!("Performing request for {}", url);
-        let mut res = add_auth(reqwest::Client::new().get(url), &source.apikey)
+        let mut res = clientbuilder_with_auth(&source.apikey)?
+            .build()?
+            .get(url)
             .send()
             .await?
             .json::<PretalxSubmissionsResponse>()
             .await?;
+
         all_submissions.append(&mut res.results);
         if let Some(next_url) = res.next {
             url = Url::parse(next_url.as_str())?;
+            if on_https {
+                info!("Updating url {} to https", &url);
+                url.set_scheme("https").unwrap();
+            }
+            
             debug!("Next url is: {}", url);
         } else {
             break;
@@ -135,7 +170,9 @@ async fn update_source(db: &DbConn, source: SourceToUpdate) -> Result<(), Update
         .as_str(),
     )?;
     debug!("Schedule url is {}", &schedule_url);
-    let res = add_auth(reqwest::Client::new().get(schedule_url), &source.apikey)
+    let res = clientbuilder_with_auth(&source.apikey)?
+        .build()?
+        .get(schedule_url)
         .send()
         .await?
         .json::<PretalxScheduleResponse>()
