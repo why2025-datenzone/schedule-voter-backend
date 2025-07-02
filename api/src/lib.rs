@@ -389,6 +389,7 @@ async fn start(user_to_create: Option<(String, String, String)>) -> anyhow::Resu
         .route("/urls/{slug}", get(get_source_update_urls))
         .route("/ratings/{slug}", get(get_event_ratings))
         .route("/conflicts/{slug}/{mode}/{limit}", get(get_event_conflicts))
+        .route("/similarities/{slug}/{submission}/{mode}/{limit}", get(get_similarities))
         .route(
             "/updatesource/{event_slug}/{source_slug}/{token}",
             post(post_manual_update_source),
@@ -835,6 +836,25 @@ async fn post_update_event(
                 MutationCore::update_event(&state.conn, event_with_perm.event, req).await?;
                 return Ok(get_success_response());
             }
+        }
+    }
+    return Err(AppError::Parameter);
+}
+
+async fn get_similarities(
+    state: State<AppState>,
+    Path((slug, submission, mode, limit)): Path<(String, String, String, u32)>,
+    TypedHeader(token): TypedHeader<Authorization<Bearer>>,
+) -> Result<impl IntoResponse, AppError> {
+    let conflict_mode = ConflcitMode::try_from(mode.as_str()).map_err(|_e| AppError::Parameter)?;
+    let user = QueryCore::get_user_from_token(&state.conn, token.token()).await?;
+    if let Some(uid) = user {
+        let maybe_event_with_perm =
+            QueryCore::get_event_perm_for_user(&state.conn, uid, &slug).await?;
+        if let Some(event_with_perm) = maybe_event_with_perm {
+            let similarities = QueryCore::get_submission_similarities(&state.conn, event_with_perm.event, conflict_mode, submission, limit)
+            .await?;
+            return Ok(Json(similarities));
         }
     }
     return Err(AppError::Parameter);

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use itertools::Itertools;
 
 use sea_orm::{prelude::Expr, sea_query::ExprTrait, *};
@@ -82,6 +82,18 @@ impl TryFrom<&str> for ConflcitMode {
 #[serde(transparent)]
 pub struct EventConflictResponse {
     res: Vec<EventConflictItem>,
+}
+
+#[derive(Serialize)]
+pub struct SubmissionSimilarityItem {
+    id: String,
+    metric: f64,
+}
+
+#[derive(Serialize)]
+#[serde(transparent)]
+pub struct SubmissionSimilarityResponse {
+    res: Vec<SubmissionSimilarityItem>,
 }
 
 #[derive(Serialize)]
@@ -727,6 +739,91 @@ impl Query {
     pub async fn get_provider_metadata(db: &DbConn, name: impl Into<String>) -> Result<Option<serde_json::Value>, DbErr> { 
         let res = oidc_provider::Entity::find_by_id(name.into()).one(db).await?;
         Ok(res.map(|v| v.metadata))
+    }
+
+    pub async fn get_submission_similarities(db: &DbConn, event: i32, mode: ConflcitMode, submission_id: String, limit: u32) -> Result<SubmissionSimilarityResponse, DbErr> {
+        let all_submissions = source::Entity::find()
+            .find_with_related(submission::Entity)
+            .filter(source::Column::Event.eq(event))
+            .all(db)
+            .await?;
+        let all_ids = all_submissions
+            .iter()
+            .map(
+                |(so, su)| su
+                    .into_iter()
+                    .map(
+                        |s| format!("{}/{}", so.slug, s.code)
+                    )
+                )
+            .flatten()
+            .filter(|x| submission_id != *x)
+            .collect::<Vec<String>>();
+        let mut countmap = HashMap::new();
+        for id in all_ids.iter() {
+            countmap.insert(id.clone(), 0);
+        }
+        let mut total = 0;
+        match mode {
+            ConflcitMode::ExpandedWithoutDown => {
+                let votes: Vec<(Vec<String>,Vec<String>)> = vote::Entity::find()
+                    .filter(vote::Column::Event.eq(event))
+                    .select_only()
+                    .columns([vote::Column::Expanded, vote::Column::Down])
+                    .into_tuple()
+                    .all(db)
+                    .await?;
+                for (expanded, down) in votes.into_iter() {
+                    let expmap: HashSet<String>  = HashSet::from_iter(expanded.into_iter());
+                    let downmap: HashSet<String> = HashSet::from_iter(down.into_iter());
+                    if expmap.contains(&submission_id) && (!downmap.contains(&submission_id)) {
+                        total += 1;
+                        expmap.difference(&downmap)
+                            .filter(|x| *x != &submission_id)
+                            .for_each(|x| {
+                                if let Some(e) = countmap.get_mut(x) {
+                                    *e += 1;
+                                }
+                            })
+                    }
+                }
+            },
+            _ => {
+                let votes: Vec<(Vec<String>,)> = vote::Entity::find()
+                    .filter(vote::Column::Event.eq(event))
+                    .select_only()
+                    .column(match mode {
+                        ConflcitMode::Up => vote::Column::Up,
+                        _ => vote::Column::Expanded,
+                    }
+                    )
+                    .into_tuple()
+                    .all(db)
+                    .await?;
+                for (v,) in votes.into_iter() {
+                    if v.contains(&submission_id) {
+                        total += 1;
+                        for vote in v
+                            .into_iter()
+                            .filter(|x| x != &submission_id) {
+                                countmap.entry(vote).and_modify(|e| *e += 1);
+                        }
+                    }
+                }
+            },
+        }
+        if total == 0 {
+            return Ok(SubmissionSimilarityResponse{res: vec![]});
+        }
+        let resvec = countmap.into_iter()
+            .sorted_by_key(|(_k,v)| -(*v))
+            .take(limit as usize)
+            .map(|(k,v)| SubmissionSimilarityItem{ id: k, metric: (v as f64)/(total as f64)})
+            .collect::<Vec<_>>();
+
+        let res = SubmissionSimilarityResponse{res: resvec};
+        return Ok(res)
+            
     }
 
     pub async fn get_event_conflicts(db: &DbConn, event: i32, mode: ConflcitMode, limit: u32) -> Result<EventConflictResponse, DbErr> {
