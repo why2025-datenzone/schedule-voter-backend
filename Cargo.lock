@@ -3370,6 +3370,7 @@ dependencies = [
  "serde_repr",
  "slug",
  "tokio",
+ "tracing",
  "url",
 ]
 

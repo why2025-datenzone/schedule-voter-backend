@@ -23,6 +23,9 @@ pub struct Model {
     pub autoupdate: bool,
     pub last_update: Option<DateTime>,
     pub last_attemp: Option<DateTime>,
+    #[sea_orm(column_type = "JsonBinary", nullable)]
+    pub submission_types: Option<Json>,
+    pub type_filter: Vec<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

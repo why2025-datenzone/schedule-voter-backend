@@ -8,6 +8,8 @@ use url::Url;
 
 use bitvec::prelude::*;
 
+use crate::SubmissionTypesField;
+
 pub struct Query;
 
 pub struct SourceToUpdate {
@@ -17,6 +19,7 @@ pub struct SourceToUpdate {
     pub source_id: i32,
     pub event_id: i32,
     pub filter: SourceFilter,
+    pub type_filter: Vec<i32>,
 }
 
 #[derive(Serialize)]
@@ -274,7 +277,11 @@ pub struct SourceResponseItem {
     #[serde(rename="eventSlug")]
     event_slug: Option<String>,
     interval: Option<i32>,
-    filter: Option<SourceFilter>
+    filter: Option<SourceFilter>,
+    #[serde(rename="submissionTypes")]
+    submission_types: Option<HashMap<i32, String>>,
+    #[serde(rename="typeFilter")]
+    type_filter: Vec<i32>,
 
 }
 
@@ -347,6 +354,35 @@ pub struct EventUrlsResponse {
 
 impl Query {
 
+    pub async fn get_source(db: &DbConn, event: i32, source: String) -> Result<SourceToUpdate, DbErr> {
+        let source = source::Entity::find()
+            .filter(source::Column::Event.eq(event))
+            .filter(source::Column::Slug.eq(source))
+            .one(db)
+            .await?;
+        if let Some(s) = source {
+            if let Some(url) = s.url {
+                if let Some(apikey) = s.apikey {
+                    if let Some(event_slug) = s.event_slug {
+                        if let Some(filter) = get_filter(s.filter)? {
+                            return Ok(SourceToUpdate { 
+                                update_url: url, 
+                                event_slug: event_slug, 
+                                apikey: apikey, 
+                                source_id: s.id, 
+                                event_id: event, 
+                                filter: filter, 
+                                type_filter: s.type_filter 
+                            })
+                        }
+                    }
+                }
+            }
+            
+        }
+        return Err(DbErr::RecordNotFound("Can't find the source".to_string()))
+    }
+
     pub async fn get_sources(db: &DbConn, event: i32) -> Result<SoureceResponse, DbErr> {
         let sources = source::Entity::find()
             .filter(source::Column::Event.eq(event))
@@ -355,17 +391,7 @@ impl Query {
         let res = sources
             .into_iter()
             .map(|m| {
-                let f = m.filter
-                    .map(SourceFilter::try_from)
-                    .transpose()
-                    .map_err(|e| DbErr::Custom(format!("Can't convert filter: {}", e)))?;
-                Ok::<(std::string::String, SourceResponseItem), DbErr>((m.slug, SourceResponseItem {
-                    autoupdate: m.autoupdate,
-                    url: m.url,
-                    event_slug: m.event_slug,
-                    interval: m.interval,
-                    filter: f,
-                }))
+                Ok::<(std::string::String, SourceResponseItem), DbErr>((m.slug.clone(), source_response_from_model(m)?))
             })
             .collect::<Result<HashMap<_,_>,_>>()?;
         return Ok(SoureceResponse {sources: res})
@@ -640,6 +666,7 @@ impl Query {
                     source_id: m.id,
                     event_id: m.event,
                     filter: SourceFilter::try_from(m.filter.unwrap()).unwrap(),
+                    type_filter: m.type_filter,
                 }
             }
         ).collect())
@@ -1047,4 +1074,23 @@ impl Query {
             }
         )
     }
+}
+
+fn source_response_from_model(m: source::Model) -> Result<SourceResponseItem, DbErr> {
+    Ok(SourceResponseItem {
+        autoupdate: m.autoupdate,
+        url: m.url,
+        event_slug: m.event_slug,
+        interval: m.interval,
+        filter: get_filter(m.filter)?,
+        submission_types: m.submission_types.map(|i| serde_json::from_value::<SubmissionTypesField>(i).unwrap().items),
+        type_filter: m.type_filter,
+    })
+}
+
+fn get_filter(m: Option<i32>) -> Result<Option<SourceFilter>, DbErr> {
+    m
+        .map(SourceFilter::try_from)
+        .transpose()
+        .map_err(|e| DbErr::Custom(format!("Can't convert filter: {}", e)))
 }

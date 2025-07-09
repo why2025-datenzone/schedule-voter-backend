@@ -126,73 +126,16 @@ fn clientbuilder_with_auth(token: &String) -> Result<ClientBuilder,InvalidHeader
 
 async fn update_source(db: &DbConn, source: SourceToUpdate) -> Result<(), UpdateError> {
     MutationCore::update_source_attemp(db, source.source_id).await?;
-    let state = match source.filter {
-        service::SourceFilter::Confirmed => "state=confirmed",
-        service::SourceFilter::Accepted => "state=accepted&state=confirmed",
-    };
-    let mut url = Url::parse(source.update_url.as_str())?.join(
-        format!(
-            "/api/events/{}/submissions/?{}&expand=slots",
-            &source.event_slug, state
-        )
-        .as_str(),
-    )?;
-    let on_https = url.scheme() == "https";
-    let mut all_submissions = vec![];
-    loop {
-        debug!("Performing request for {}", url);
-        let mut res = clientbuilder_with_auth(&source.apikey)?
-            .build()?
-            .get(url)
-            .send()
-            .await?
-            .json::<PretalxSubmissionsResponse>()
-            .await?;
 
-        all_submissions.append(&mut res.results);
-        if let Some(next_url) = res.next {
-            url = Url::parse(next_url.as_str())?;
-            if on_https {
-                info!("Updating url {} to https", &url);
-                url.set_scheme("https").unwrap();
-            }
-            
-            debug!("Next url is: {}", url);
-        } else {
-            break;
-        };
-    }
-    let schedule_url = Url::parse(source.update_url.as_str())?.join(
-        format!(
-            "/api/events/{}/schedules/wip/?expand=slots",
-            &source.event_slug
-        )
-        .as_str(),
-    )?;
-    debug!("Schedule url is {}", &schedule_url);
-    let res = clientbuilder_with_auth(&source.apikey)?
-        .build()?
-        .get(schedule_url)
-        .send()
-        .await?
-        .json::<PretalxScheduleResponse>()
-        .await?;
-    let schedule_map = res
-        .slots
-        .into_iter()
-        .filter_map(|slot| match (slot.submission, slot.start, slot.end) {
-            (Some(code), Some(start_timestamp), Some(end_timestamp)) => Some((
-                code,
-                SubmissionStartEnd {
-                    start: start_timestamp.to_utc(),
-                    end: end_timestamp.to_utc(),
-                },
-            )),
-            _ => None,
-        })
-        .collect::<HashMap<String, SubmissionStartEnd>>();
+    let on_https = source.update_url.starts_with("https");
 
-    let req = all_submissions
+    let all_submissions = request_submissions_from_pretalx(&source, on_https).await?;
+    
+    let schedule_map = request_schedule_from_pretalx(&source).await?;
+
+    let type_map = request_types_from_pretalx(&source, on_https).await?;
+
+    let submissions_map = all_submissions
         .into_iter()
         .map(|submission| {
             (
@@ -210,11 +153,145 @@ async fn update_source(db: &DbConn, source: SourceToUpdate) -> Result<(), Update
         db,
         SyncSourceRequest {
             source_id: source.source_id,
-            submissions: req,
+            submissions: submissions_map,
+            submission_types: Some(type_map),
         },
     )
     .await?;
     Ok(())
+}
+
+async fn request_submissions_from_pretalx(source: &SourceToUpdate, on_https: bool) -> Result<Vec<PretalxSubmission>, UpdateError> {
+    let state = match source.filter {
+        service::SourceFilter::Confirmed => "state=confirmed",
+        service::SourceFilter::Accepted => "state=accepted&state=confirmed",
+    };
+    let mut all_submissions = vec![];
+    let submission_types = if source.type_filter.len() == 0 {
+        vec!["".to_string()]
+    } else {
+        source.type_filter.iter().map(|i| {
+            format!("&submission_type={}", i)
+        }).collect()
+    };
+    for submission_type in submission_types.into_iter() {
+        let mut submissions_url = Url::parse(source.update_url.as_str())?.join(
+            format!(
+                "/api/events/{}/submissions/?{}&expand=slots{}",
+                &source.event_slug, state, submission_type
+            )
+            .as_str(),
+        )?;
+        loop {
+            debug!("Performing request for {}", submissions_url);
+            let mut res = clientbuilder_with_auth(&source.apikey)?
+                .build()?
+                .get(submissions_url)
+                .send()
+                .await?
+                .json::<PretalxSubmissionsResponse>()
+                .await?;
+
+            all_submissions.append(&mut res.results);
+            if let Some(next_url) = res.next {
+                submissions_url = Url::parse(next_url.as_str())?;
+                if on_https {
+                    info!("Updating url {} to https", &submissions_url);
+                    submissions_url.set_scheme("https").unwrap();
+                }
+            
+                debug!("Next url is: {}", submissions_url);
+            } else {
+                break;
+            };
+        }
+    }
+    Ok(all_submissions)
+}
+
+async fn request_types_from_pretalx(source: &SourceToUpdate, on_https: bool) -> Result<HashMap<i32, String>, UpdateError> {
+    let mut types_url = Url::parse(source.update_url.as_str())?.join(
+        format!(
+            "/api/events/{}/submission-types/",
+            &source.event_slug
+        )
+        .as_str(),
+    )?;
+    let mut all_types = vec![];
+    loop {
+        let mut pretalx_types_res = clientbuilder_with_auth(&source.apikey)?
+        .build()?
+        .get(types_url)
+        .send()
+        .await?
+        .json::<PretalxSubmissionTypesResponse>()
+        .await?;
+        all_types.append(&mut pretalx_types_res.results);
+        if let Some(next_url) = pretalx_types_res.next {
+            types_url = Url::parse(next_url.as_str())?;
+            if on_https {
+                info!("Updating url {} to https", &types_url);
+                types_url.set_scheme("https").unwrap();
+            }
+        
+            debug!("Next url is: {}", types_url);
+        } else {
+            break;
+        };
+    }
+    warn!("Types is {:?}", &all_types);
+    let type_map = all_types
+        .into_iter()
+        .map(
+            |mut t| (
+                t.id, 
+                t.name.remove("en")
+                    .unwrap_or_else(
+                        || t.name
+                            .drain()
+                            .map(|(_k,v)| v)
+                            .next()
+                            .unwrap_or_else(
+                                || "".to_string()
+                            )
+                    )
+                )
+            )
+        .collect::<HashMap<i32, String>>();
+    Ok(type_map)
+}
+
+async fn request_schedule_from_pretalx(source: &SourceToUpdate) -> Result<HashMap<String, SubmissionStartEnd>, UpdateError> {
+    let schedule_url = Url::parse(source.update_url.as_str())?.join(
+        format!(
+            "/api/events/{}/schedules/wip/?expand=slots",
+            &source.event_slug
+        )
+        .as_str(),
+    )?;
+    debug!("Schedule url is {}", &schedule_url);
+    let pretalx_schedule_res = clientbuilder_with_auth(&source.apikey)?
+        .build()?
+        .get(schedule_url)
+        .send()
+        .await?
+        .json::<PretalxScheduleResponse>()
+        .await?;
+    let schedule_map = pretalx_schedule_res
+        .slots
+        .into_iter()
+        .filter_map(|slot| match (slot.submission, slot.start, slot.end) {
+            (Some(code), Some(start_timestamp), Some(end_timestamp)) => Some((
+                code,
+                SubmissionStartEnd {
+                    start: start_timestamp.to_utc(),
+                    end: end_timestamp.to_utc(),
+                },
+            )),
+            _ => None,
+        })
+        .collect::<HashMap<String, SubmissionStartEnd>>();
+    Ok(schedule_map)
 }
 
 async fn perform_updates(db: &DbConn) -> Result<(), UpdateError> {
@@ -386,6 +463,7 @@ async fn start(user_to_create: Option<(String, String, String)>) -> anyhow::Resu
         .route("/users/{slug}/{user}", post(post_edit_user))
         .route("/sources/{slug}/{source}", post(post_update_source))
         .route("/sources/{slug}/{source}", delete(delete_source))
+        .route("/sources/{slug}/{source}/scheduleupdate", get(get_source_schedule_update))
         .route("/urls/{slug}", get(get_source_update_urls))
         .route("/ratings/{slug}", get(get_event_ratings))
         .route("/conflicts/{slug}/{mode}/{limit}", get(get_event_conflicts))
@@ -809,6 +887,7 @@ async fn post_manual_update_source(
             SyncSourceRequest {
                 source_id: source_id,
                 submissions: submissions,
+                submission_types: None,
             },
         )
         .await?;
@@ -929,6 +1008,26 @@ async fn get_source_update_urls(
     }
     return Err(AppError::Parameter);
 }
+
+async fn get_source_schedule_update(
+    state: State<AppState>,
+    Path((slug, source)): Path<(String, String)>,
+    TypedHeader(token): TypedHeader<Authorization<Bearer>>,
+) -> Result<impl IntoResponse, AppError> {
+    let user = QueryCore::get_user_from_token(&state.conn, token.token()).await?;
+    if let Some(uid) = user {
+        let maybe_event_with_perm =
+            QueryCore::get_event_perm_for_user(&state.conn, uid, slug).await?;
+        if let Some(event_with_perm) = maybe_event_with_perm {
+            let source = QueryCore::get_source(&state.conn, event_with_perm.event, source).await?;
+            let schedule_map = request_schedule_from_pretalx(&source).await.map_err(|_e| AppError::Parameter)?;
+            MutationCore::sync_schedule(&state.conn, source.source_id, schedule_map).await?;
+            return Ok(get_success_response())
+        }
+    }
+    return Err(AppError::Parameter);
+}
+            
 
 #[axum::debug_handler]
 async fn post_update_source(
@@ -1286,6 +1385,19 @@ struct PretalxScheduleSlot {
 struct PretalxScheduleResponse {
     slots: Vec<PretalxScheduleSlot>,
 }
+
+#[derive(Deserialize,Debug)]
+struct PretalxSubmissionTypesResponse {
+    next: Option<String>,
+    results: Vec<PretalxSubmissionTypesResult>,
+}
+
+#[derive(Deserialize,Debug)]
+struct PretalxSubmissionTypesResult {
+    id: i32,
+    name: HashMap<String, String>,
+}
+
 
 #[axum::debug_handler]
 async fn deliver_admin_app(

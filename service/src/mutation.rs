@@ -1,4 +1,6 @@
 use std::collections::{HashMap, HashSet};
+use itertools::Itertools;
+use tracing::{debug, info};
 
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::SaltString;
@@ -75,6 +77,7 @@ pub struct SubmissionSyncItem {
 
 pub struct SyncSourceRequest {
     pub source_id: i32,
+    pub submission_types: Option<HashMap<i32, String>>,
     pub submissions: HashMap<String, SubmissionSyncItem>,
 }
 
@@ -90,6 +93,12 @@ struct ContentItem {
 #[serde(transparent)]
 struct ContentValue {
     items: HashMap<String, ContentItem>,
+}
+
+#[derive(Serialize,Deserialize)]
+#[serde(transparent)]
+pub struct SubmissionTypesField {
+    pub items: HashMap<i32, String>,
 }
 
 
@@ -122,6 +131,8 @@ pub struct UpdateSourceRequest {
     #[serde(rename="eventSlug")]
     event_slug: Option<String>,
     apikey: Option<String>,
+    #[serde(rename="typeFilter")]
+    type_filter: Option<Vec<i32>>,
 }
 
 #[derive(Deserialize)]
@@ -210,6 +221,7 @@ impl Mutation {
     }
 
     pub async fn sync_schedule(db: &DbConn, source_id: i32, schedule: HashMap<String, SubmissionStartEnd>) -> Result<(), DbErr> {
+        debug!("Syncing schedule for source {}", source_id);
         db.transaction::<_, (), DbErr>(|txn| {
             Box::pin(async move {
                 // We use it only for locking
@@ -283,8 +295,25 @@ impl Mutation {
                 if (!to_delete_codes.is_empty()) || (!to_create.is_empty()) {
                     real_update = true;
                 }
-                eprintln!("Status: to_delete: {:?} to_create: {:?} updates: {:?}", to_delete_codes, to_create, updates);
-                if (!to_delete_codes.is_empty()) || (!to_create.is_empty()) || (!updates.is_empty()) {
+                
+                let mut force_update = false;
+                if let Some(ref submission_types) = req.submission_types {
+                        if let Some(old_types) = &current_source.submission_types {
+                            if let Ok(old_types_map) = serde_json::from_value::<SubmissionTypesField>(old_types.clone()) {
+                                if !(old_types_map.items == *submission_types) {
+                                    force_update = true;
+                                }
+                            } else {
+                                force_update = true;
+                            }
+                        } else {
+                            force_update = true;
+                        }
+                        
+                    }
+                    
+                info!("Status: to_delete: {:?} to_create: {:?} updates: {:?}", to_delete_codes, to_create, updates);
+                if (!to_delete_codes.is_empty()) || (!to_create.is_empty()) || (!updates.is_empty()) || force_update {
                     
                     for code in to_delete_codes.into_iter() {
                         submission::Entity::delete_many()
@@ -313,6 +342,13 @@ impl Mutation {
                     let event = current_source.event;
                     let mut am = current_source.into_active_model();
                     am.set(source::Column::LastUpdate, Utc::now().naive_utc().into());
+                    if let Some(submission_types) = req.submission_types {
+                        let stf = SubmissionTypesField{items: submission_types};
+                        // info!("Setting submission types: {}", stf);
+                        let v = serde_json::to_value(stf).unwrap();
+                        info!("v is {}", v);
+                        am.set(source::Column::SubmissionTypes, v.into());
+                    }
                     am.update(txn).await?;
                     if real_update {
                         Self::update_event_schedule(txn, event).await?;
@@ -537,7 +573,7 @@ impl Mutation {
         model.slug = Set(slug);
         model.event = Set(event);
         model.updatekey = Set(updatekey);
-
+        
         let mut to_update = Vec::new();
         if let Some(interval) = update.interval {
             if (interval < 60) || (interval > 7200) {
@@ -553,6 +589,11 @@ impl Mutation {
         if let Some(filter) = update.filter {
             model.filter = Set(Some(filter as i32));
             to_update.push(source::Column::Filter);
+        }
+        if let Some(type_filter) = update.type_filter {
+            let hs = type_filter.into_iter().collect::<HashSet<i32>>();
+            model.type_filter = Set(hs.into_iter().sorted().collect());
+            to_update.push(source::Column::TypeFilter);
         }
         if let Some(apikey) = update.apikey {
             model.apikey = Set(Some(apikey));
