@@ -2,6 +2,7 @@ pub use sea_orm_migration::prelude::*;
 
 mod m20240607_000001_create_event_vote;
 mod m20250709_003429_source_event_type_filter;
+mod m20250710_024323_submission_add_room;
 
 pub struct Migrator;
 
@@ -11,6 +12,7 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20240607_000001_create_event_vote::Migration),
             Box::new(m20250709_003429_source_event_type_filter::Migration),
+            Box::new(m20250710_024323_submission_add_room::Migration),
         ]
     }
 }

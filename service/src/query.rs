@@ -221,6 +221,7 @@ pub struct EventWithPerm {
 pub struct ScheduledTime {
     start: u32,
     end: u32,
+    room: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -548,7 +549,8 @@ impl Query {
                     time: match (su.start, su.end) {
                         (Some(start), Some(end)) => Some(ScheduledTime { 
                             start: start.and_utc().timestamp() as u32,
-                            end: end.and_utc().timestamp() as u32 
+                            end: end.and_utc().timestamp() as u32,
+                            room: su.room,
                         }),
                         _ => None
                     },

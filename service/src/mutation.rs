@@ -65,6 +65,7 @@ pub struct UpdateEventRequest {
 pub struct SubmissionStartEnd {
     pub start: chrono::DateTime<Utc>,
     pub end: chrono::DateTime<Utc>,
+    pub room: Option<String>,
 }
 
 #[derive(Debug,Deserialize)]
@@ -167,6 +168,7 @@ impl Mutation {
     pub fn update_submission_time(code: &String, source_id: i32, old: &submission::Model, schedule_time: &Option<&SubmissionStartEnd>) -> Option<submission::ActiveModel> {
         match schedule_time.as_ref() {
                         Some(scheduled_time) => {
+                            let newroom = schedule_time.map(|st| st.room.clone()).flatten();
                             if (old.start == None) || (old.end == None) {
                                 Some(submission::ActiveModel {
                                     code: Set(code.clone()),
@@ -178,11 +180,12 @@ impl Mutation {
                                     end: Set(schedule_time.as_ref().map(|t| t.end.naive_utc())),
                                     created: NotSet,
                                     updated: NotSet,
+                                    room: Set(newroom),
                                 })
                             } else {
                                 let startdiff = old.start.unwrap().and_utc() - scheduled_time.start;
                                 let enddiff = old.end.unwrap().and_utc() - scheduled_time.end.to_utc();
-                                if (startdiff.num_milliseconds() > 500) || (enddiff.num_milliseconds() > 500) {
+                                if (startdiff.num_milliseconds() > 500) || (enddiff.num_milliseconds() > 500) || (old.room != newroom) {
                                     Some(submission::ActiveModel {
                                         code: Set(code.clone()),
                                         title: NotSet,
@@ -193,6 +196,8 @@ impl Mutation {
                                         end: Set(schedule_time.as_ref().map(|t| t.end.naive_utc())),
                                         created: NotSet,
                                         updated: NotSet,
+                                        room: Set(newroom),
+
                                     })
                                 } else {
                                     None
@@ -210,6 +215,7 @@ impl Mutation {
                                     source: Set(source_id),
                                     start: Set(None),
                                     end: Set(None),
+                                    room: Set(None),
                                     created: NotSet,
                                     updated: NotSet,
                                 })
@@ -288,6 +294,7 @@ impl Mutation {
                             end: Set(new.schedule_time.as_ref().map(|t| t.end.naive_utc())),
                             created: NotSet,
                             updated: Set(Utc::now().naive_utc()),
+                            room: Set(new.schedule_time.as_ref().map(|st| st.room.clone()).flatten()),
                         })
                     }
                     Self::update_submission_time(code, req.source_id, old, &new.schedule_time.as_ref())
@@ -332,6 +339,7 @@ impl Mutation {
                             source: Set(req.source_id),
                             start: Set(template.schedule_time.as_ref().map(|t| t.start.naive_utc())),
                             end: Set(template.schedule_time.as_ref().map(|t| t.end.naive_utc())),
+                            room: Set(template.schedule_time.as_ref().map(|st| st.room.clone()).flatten()),
                             created: Set(Utc::now().naive_utc()),
                             updated: Set(Utc::now().naive_utc()),
                         }.insert(txn).await?;

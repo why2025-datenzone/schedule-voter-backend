@@ -264,7 +264,7 @@ async fn request_types_from_pretalx(source: &SourceToUpdate, on_https: bool) -> 
 async fn request_schedule_from_pretalx(source: &SourceToUpdate) -> Result<HashMap<String, SubmissionStartEnd>, UpdateError> {
     let schedule_url = Url::parse(source.update_url.as_str())?.join(
         format!(
-            "/api/events/{}/schedules/wip/?expand=slots",
+            "/api/events/{}/schedules/wip/?expand=slots,slots.room",
             &source.event_slug
         )
         .as_str(),
@@ -286,6 +286,19 @@ async fn request_schedule_from_pretalx(source: &SourceToUpdate) -> Result<HashMa
                 SubmissionStartEnd {
                     start: start_timestamp.to_utc(),
                     end: end_timestamp.to_utc(),
+                    room: slot.room.map(
+                        |mut ptr| ptr.name
+                            .remove("en")
+                            .unwrap_or_else(
+                                || ptr.name
+                                    .drain()
+                                    .map(|(_k,v)| v)
+                                    .next()
+                                    .unwrap_or_else(
+                                        || "".to_string()
+                                    )
+                            )
+                        ),
                 },
             )),
             _ => None,
@@ -1375,10 +1388,16 @@ struct PretalxSubmissionsResponse {
 }
 
 #[derive(Deserialize)]
+struct PretalxRoom {
+    name: HashMap<String,String>,
+}
+
+#[derive(Deserialize)]
 struct PretalxScheduleSlot {
     start: Option<chrono::DateTime<FixedOffset>>,
     end: Option<chrono::DateTime<FixedOffset>>,
     submission: Option<String>,
+    room: Option<PretalxRoom>,
 }
 
 #[derive(Deserialize)]
