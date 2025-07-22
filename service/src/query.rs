@@ -1,16 +1,105 @@
-use std::collections::{HashMap, HashSet};
-use itertools::Itertools;
+use std::collections::HashMap;
 
 use sea_orm::{prelude::Expr, sea_query::ExprTrait, *};
 use ::entity::{event, oidc_provider, source, submission, token, user, user_event, vote};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use bitvec::prelude::*;
-
-use crate::SubmissionTypesField;
+use crate::vote_metric::Similarity;
+use crate::{vote_metric::{self, CosineVoteMetric, ExpandedVoteSelector, ExpandedWithoutDownVoteSelector, JaccardVoteMetric, LiftVoteMetric, SupportVoteMetric, UpVoteSelector, WeightedSupportMetric}, SubmissionTypesField};
 
 pub struct Query;
+
+enum VoteMetricVariant {
+    JaccardUp(vote_metric::SimilarityStruct::<JaccardVoteMetric<UpVoteSelector>>),
+    JaccardExpanded(vote_metric::SimilarityStruct::<JaccardVoteMetric<ExpandedVoteSelector>>),
+    JaccardExpandedWithoutDown(vote_metric::SimilarityStruct::<JaccardVoteMetric<ExpandedWithoutDownVoteSelector>>),
+    SupportUp(vote_metric::SimilarityStruct::<SupportVoteMetric<UpVoteSelector>>),
+    SupportExpanded(vote_metric::SimilarityStruct::<SupportVoteMetric<ExpandedVoteSelector>>),
+    SupportExpandedWithoutDown(vote_metric::SimilarityStruct::<SupportVoteMetric<ExpandedWithoutDownVoteSelector>>),
+    SupportWeightedUp(vote_metric::SimilarityStruct::<WeightedSupportMetric<UpVoteSelector>>),
+    SupportWeightedExpanded(vote_metric::SimilarityStruct::<WeightedSupportMetric<ExpandedVoteSelector>>),
+    SupportWeightedExpandedWithoutDown(vote_metric::SimilarityStruct::<WeightedSupportMetric<ExpandedWithoutDownVoteSelector>>),
+    LiftUp(vote_metric::SimilarityStruct::<LiftVoteMetric<UpVoteSelector>>),
+    LiftExpanded(vote_metric::SimilarityStruct::<LiftVoteMetric<ExpandedVoteSelector>>),
+    LiftExpandedWithoutDown(vote_metric::SimilarityStruct::<LiftVoteMetric<ExpandedWithoutDownVoteSelector>>),
+    Cosine(vote_metric::SimilarityStruct::<CosineVoteMetric>),
+}
+
+
+impl VoteMetricVariant {
+    fn get_columns(&self) -> Vec<vote::Column> {
+        match self {
+            VoteMetricVariant::JaccardUp(vm) => vm.get_columns(),
+            VoteMetricVariant::JaccardExpanded(vm) => vm.get_columns(),
+            VoteMetricVariant::JaccardExpandedWithoutDown(vm) => vm.get_columns(),
+            VoteMetricVariant::SupportUp(vm) => vm.get_columns(),
+            VoteMetricVariant::SupportExpanded(vm) => vm.get_columns(),
+            VoteMetricVariant::SupportExpandedWithoutDown(vm) => vm.get_columns(),
+            VoteMetricVariant::SupportWeightedUp(vm) => vm.get_columns(),
+            VoteMetricVariant::SupportWeightedExpanded(vm) => vm.get_columns(),
+            VoteMetricVariant::SupportWeightedExpandedWithoutDown(vm) => vm.get_columns(),
+            VoteMetricVariant::LiftUp(vm) => vm.get_columns(),
+            VoteMetricVariant::LiftExpanded(vm) => vm.get_columns(),
+            VoteMetricVariant::LiftExpandedWithoutDown(vm) => vm.get_columns(),
+            VoteMetricVariant::Cosine(vm) => vm.get_columns(),
+        }
+    }
+
+    fn process_votes(&mut self, votes: Vec<Vec<Vec<String>>>) {
+        match self {
+            VoteMetricVariant::JaccardUp(vm) => vm.process_votes(votes),
+            VoteMetricVariant::JaccardExpanded(vm) => vm.process_votes(votes),
+            VoteMetricVariant::JaccardExpandedWithoutDown(vm) => vm.process_votes(votes),
+            VoteMetricVariant::SupportUp(vm) => vm.process_votes(votes),
+            VoteMetricVariant::SupportExpanded(vm) => vm.process_votes(votes),
+            VoteMetricVariant::SupportExpandedWithoutDown(vm) => vm.process_votes(votes),
+            VoteMetricVariant::SupportWeightedUp(vm) => vm.process_votes(votes),
+            VoteMetricVariant::SupportWeightedExpanded(vm) => vm.process_votes(votes),
+            VoteMetricVariant::SupportWeightedExpandedWithoutDown(vm) => vm.process_votes(votes),
+            VoteMetricVariant::LiftUp(vm) => vm.process_votes(votes),
+            VoteMetricVariant::LiftExpanded(vm) => vm.process_votes(votes),
+            VoteMetricVariant::LiftExpandedWithoutDown(vm) => vm.process_votes(votes),
+            VoteMetricVariant::Cosine(vm) => vm.process_votes(votes),
+        }
+    }
+
+    fn get_item_results(self, limit: usize) -> Vec<SubmissionSimilarityItem> {
+        match self {
+            VoteMetricVariant::JaccardUp(vm) => vm.get_item_results(limit),
+            VoteMetricVariant::JaccardExpanded(vm) => vm.get_item_results(limit),
+            VoteMetricVariant::JaccardExpandedWithoutDown(vm) => vm.get_item_results(limit),
+            VoteMetricVariant::SupportUp(vm) => vm.get_item_results(limit),
+            VoteMetricVariant::SupportExpanded(vm) => vm.get_item_results(limit),
+            VoteMetricVariant::SupportExpandedWithoutDown(vm) => vm.get_item_results(limit),
+            VoteMetricVariant::SupportWeightedUp(vm) => vm.get_item_results(limit),
+            VoteMetricVariant::SupportWeightedExpanded(vm) => vm.get_item_results(limit),
+            VoteMetricVariant::SupportWeightedExpandedWithoutDown(vm) => vm.get_item_results(limit),
+            VoteMetricVariant::LiftUp(vm) => vm.get_item_results(limit),
+            VoteMetricVariant::LiftExpanded(vm) => vm.get_item_results(limit),
+            VoteMetricVariant::LiftExpandedWithoutDown(vm) => vm.get_item_results(limit),
+            VoteMetricVariant::Cosine(vm) => vm.get_item_results(limit),
+        }
+    }
+
+    fn get_results(self, limit: usize) -> Vec<EventConflictItem> {
+        match self {
+            VoteMetricVariant::JaccardUp(vm) => vm.get_results(limit),
+            VoteMetricVariant::JaccardExpanded(vm) => vm.get_results(limit),
+            VoteMetricVariant::JaccardExpandedWithoutDown(vm) => vm.get_results(limit),
+            VoteMetricVariant::SupportUp(vm) => vm.get_results(limit),
+            VoteMetricVariant::SupportExpanded(vm) => vm.get_results(limit),
+            VoteMetricVariant::SupportExpandedWithoutDown(vm) => vm.get_results(limit),
+            VoteMetricVariant::SupportWeightedUp(vm) => vm.get_results(limit),
+            VoteMetricVariant::SupportWeightedExpanded(vm) => vm.get_results(limit),
+            VoteMetricVariant::SupportWeightedExpandedWithoutDown(vm) => vm.get_results(limit),
+            VoteMetricVariant::LiftUp(vm) => vm.get_results(limit),
+            VoteMetricVariant::LiftExpanded(vm) => vm.get_results(limit),
+            VoteMetricVariant::LiftExpandedWithoutDown(vm) => vm.get_results(limit),
+            VoteMetricVariant::Cosine(vm) => vm.get_results(limit),
+        }
+    }
+}
 
 pub struct SourceToUpdate {
     pub update_url: String,
@@ -30,19 +119,46 @@ pub struct EventRatingItem {
     expanded: i64,
 }
 
-struct ConflictState {
-    fullcode_a: String,
-    fullcode_b: String,
-    index_a: usize,
-    index_b: usize,
-    count_joint: u64,
-    count_total: u64,
-}
+// struct ConflictState {
+//     fullcode_a: String,
+//     fullcode_b: String,
+//     index_a: usize,
+//     index_b: usize,
+//     count_joint: u64,
+//     count_total: u64,
+// }
+
+// struct ViewConflictState {
+//     fullcode_a: String,
+//     fullcode_b: String,
+//     index_a: usize,
+//     index_b: usize,
+//     up_joint: u64,
+//     view_joint: u64,
+// }
+
+// struct CosineConflictState {
+//     fullcode_a: String,
+//     fullcode_b: String,
+//     index_a: usize,
+//     index_b: usize,
+//     dotprod: i64,
+//     norm_a: i64,
+//     norm_b: i64,
+// }
+
+// struct WeightedConflictState {
+//     fullcode_a: String,
+//     fullcode_b: String,
+//     index_a: usize,
+//     index_b: usize,
+//     votes: f64,
+// }
 
 #[derive(FromQueryResult)]
-struct SubmissionConflictQueryItem {
-    fullcode_a: String,
-    fullcode_b: String,
+pub struct SubmissionConflictQueryItem {
+    pub fullcode_a: String,
+    pub fullcode_b: String,
 }
 
 #[derive(FromQueryResult)]
@@ -56,16 +172,26 @@ struct EvenRatingQueryItem {
 
 #[derive(Serialize)]
 pub struct EventConflictItem {
-    a: String,
-    b: String,
-    correlation: f64,
+    pub a: String,
+    pub b: String,
+    pub correlation: f64,
 }
 
 #[derive(PartialEq)]
 pub enum ConflcitMode {
-    Up,
-    Expanded,
-    ExpandedWithoutDown,
+    JaccardUp,
+    JaccardExpanded,
+    JaccardExpandedWithoutDown,
+    SupportUp,
+    SupportExpanded,
+    SupportExpandedWithoutDown,
+    SupportWeightedUp,
+    SupportWeightedExpanded,
+    SupportWeightedExpandedWithoutDown,
+    LiftUp,
+    LiftExpanded,
+    LiftExpandedWithoutDown,
+    Cosine,
 }
 
 impl TryFrom<&str> for ConflcitMode {
@@ -73,9 +199,19 @@ impl TryFrom<&str> for ConflcitMode {
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
-            "up" => Ok(Self::Up),
-            "expanded" => Ok(Self::Expanded),
-            "expanded-without-down" => Ok(Self::ExpandedWithoutDown),
+            "jaccard-up" => Ok(Self::JaccardUp),
+            "jaccard-expanded" => Ok(Self::JaccardExpanded),
+            "jaccard-expanded-without-down" => Ok(Self::JaccardExpandedWithoutDown),
+            "support-up" => Ok(Self::SupportUp),
+            "support-expanded" => Ok(Self::SupportExpanded),
+            "support-expanded-without-down" => Ok(Self::SupportExpandedWithoutDown),
+            "support-weighted-up" => Ok(Self::SupportWeightedUp),
+            "support-weighted-expanded" => Ok(Self::SupportWeightedExpanded),
+            "support-weighted-expanded-without-down" => Ok(Self::SupportWeightedExpandedWithoutDown),
+            "lift-up" => Ok(Self::LiftUp),
+            "lift-expanded" => Ok(Self::LiftExpanded),
+            "lift-expanded-without-down" => Ok(Self::LiftExpandedWithoutDown),
+            "cosine" => Ok(Self::Cosine),
             _ => Err(format!("Invalid value: {}", value))
         }
     }
@@ -89,8 +225,8 @@ pub struct EventConflictResponse {
 
 #[derive(Serialize)]
 pub struct SubmissionSimilarityItem {
-    id: String,
-    metric: f64,
+    pub id: String,
+    pub metric: f64,
 }
 
 #[derive(Serialize)]
@@ -770,88 +906,68 @@ impl Query {
         Ok(res.map(|v| v.metadata))
     }
 
-    pub async fn get_submission_similarities(db: &DbConn, event: i32, mode: ConflcitMode, submission_id: String, limit: u32) -> Result<SubmissionSimilarityResponse, DbErr> {
-        let all_submissions = source::Entity::find()
-            .find_with_related(submission::Entity)
-            .filter(source::Column::Event.eq(event))
-            .all(db)
-            .await?;
-        let all_ids = all_submissions
-            .iter()
-            .map(
-                |(so, su)| su
-                    .into_iter()
-                    .map(
-                        |s| format!("{}/{}", so.slug, s.code)
-                    )
-                )
-            .flatten()
-            .filter(|x| submission_id != *x)
-            .collect::<Vec<String>>();
-        let mut countmap = HashMap::new();
-        for id in all_ids.iter() {
-            countmap.insert(id.clone(), 0);
-        }
-        let mut total = 0;
-        match mode {
-            ConflcitMode::ExpandedWithoutDown => {
-                let votes: Vec<(Vec<String>,Vec<String>)> = vote::Entity::find()
-                    .filter(vote::Column::Event.eq(event))
-                    .select_only()
-                    .columns([vote::Column::Expanded, vote::Column::Down])
-                    .into_tuple()
-                    .all(db)
-                    .await?;
-                for (expanded, down) in votes.into_iter() {
-                    let expmap: HashSet<String>  = HashSet::from_iter(expanded.into_iter());
-                    let downmap: HashSet<String> = HashSet::from_iter(down.into_iter());
-                    if expmap.contains(&submission_id) && (!downmap.contains(&submission_id)) {
-                        total += 1;
-                        expmap.difference(&downmap)
-                            .filter(|x| *x != &submission_id)
-                            .for_each(|x| {
-                                if let Some(e) = countmap.get_mut(x) {
-                                    *e += 1;
-                                }
-                            })
-                    }
-                }
-            },
-            _ => {
-                let votes: Vec<(Vec<String>,)> = vote::Entity::find()
-                    .filter(vote::Column::Event.eq(event))
-                    .select_only()
-                    .column(match mode {
-                        ConflcitMode::Up => vote::Column::Up,
-                        _ => vote::Column::Expanded,
-                    }
-                    )
-                    .into_tuple()
-                    .all(db)
-                    .await?;
-                for (v,) in votes.into_iter() {
-                    if v.contains(&submission_id) {
-                        total += 1;
-                        for vote in v
-                            .into_iter()
-                            .filter(|x| x != &submission_id) {
-                                countmap.entry(vote).and_modify(|e| *e += 1);
-                        }
-                    }
-                }
-            },
-        }
-        if total == 0 {
-            return Ok(SubmissionSimilarityResponse{res: vec![]});
-        }
-        let resvec = countmap.into_iter()
-            .sorted_by_key(|(_k,v)| -(*v))
-            .take(limit as usize)
-            .map(|(k,v)| SubmissionSimilarityItem{ id: k, metric: (v as f64)/(total as f64)})
-            .collect::<Vec<_>>();
 
-        let res = SubmissionSimilarityResponse{res: resvec};
-        return Ok(res)
+    pub async fn get_submission_similarities(db: &DbConn, event: i32, mode: ConflcitMode, submission_id: String, limit: u32) -> Result<SubmissionSimilarityResponse, DbErr> {
+        let all_ids = get_all_ids_for_event(db, event, &submission_id).await?;
+        // let vm  = match mode {
+        //     ConflcitMode::JaccardUp => VoteMetricVariant::JaccardUp(vote_metric::Similarity::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::JaccardExpanded => VoteMetricVariant::JaccardExpanded(vote_metric::Similarity::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::JaccardExpandedWithoutDown => VoteMetricVariant::JaccardExpandedWithoutDown(vote_metric::Similarity::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::SupportUp => VoteMetricVariant::SupportUp(vote_metric::Similarity::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::SupportExpanded => VoteMetricVariant::SupportExpanded(vote_metric::Similarity::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::SupportExpandedWithoutDown => VoteMetricVariant::SupportExpandedWithoutDown(vote_metric::Similarity::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::SupportWeightedUp => VoteMetricVariant::SupportWeightedUp(vote_metric::Similarity::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::SupportWeightedExpanded => VoteMetricVariant::SupportWeightedExpanded(vote_metric::Similarity::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::SupportWeightedExpandedWithoutDown => VoteMetricVariant::SupportWeightedExpandedWithoutDown(vote_metric::Similarity::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::LiftUp => VoteMetricVariant::LiftUp(vote_metric::Similarity::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::LiftExpanded => VoteMetricVariant::LiftExpanded(vote_metric::Similarity::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::LiftExpandedWithoutDown => VoteMetricVariant::LiftExpandedWithoutDown(vote_metric::Similarity::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::Cosine => VoteMetricVariant::Cosine(vote_metric::Similarity::from_single_submission(submission_id, all_ids)),
+        // };
+        // let mut vm: Box<dyn vote_metric::Similarity>  = match mode {
+        //     ConflcitMode::JaccardUp => Box::new(vote_metric::SimilarityStruct::<JaccardVoteMetric<UpVoteSelector>>::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::JaccardExpanded => Box::new(vote_metric::SimilarityStruct::<JaccardVoteMetric<ExpandedVoteSelector>>::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::JaccardExpandedWithoutDown => Box::new(vote_metric::SimilarityStruct::<JaccardVoteMetric<ExpandedWithoutDownVoteSelector>>::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::SupportUp => Box::new(vote_metric::SimilarityStruct::<SupportVoteMetric<UpVoteSelector>>::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::SupportExpanded => Box::new(vote_metric::SimilarityStruct::<SupportVoteMetric<ExpandedVoteSelector>>::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::SupportExpandedWithoutDown => Box::new(vote_metric::SimilarityStruct::<SupportVoteMetric<ExpandedWithoutDownVoteSelector>>::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::SupportWeightedUp => Box::new(vote_metric::SimilarityStruct::<WeightedSupportMetric<UpVoteSelector>>::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::SupportWeightedExpanded => Box::new(vote_metric::SimilarityStruct::<WeightedSupportMetric<ExpandedVoteSelector>>::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::SupportWeightedExpandedWithoutDown => Box::new(vote_metric::SimilarityStruct::<WeightedSupportMetric<ExpandedWithoutDownVoteSelector>>::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::LiftUp => Box::new(vote_metric::SimilarityStruct::<LiftVoteMetric<UpVoteSelector>>::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::LiftExpanded => Box::new(vote_metric::SimilarityStruct::<LiftVoteMetric<ExpandedVoteSelector>>::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::LiftExpandedWithoutDown => Box::new(vote_metric::SimilarityStruct::<LiftVoteMetric<ExpandedWithoutDownVoteSelector>>::from_single_submission(submission_id, all_ids)),
+        //     ConflcitMode::Cosine => Box::new(vote_metric::SimilarityStruct::<CosineVoteMetric>::from_single_submission(submission_id, all_ids)),
+        // };
+        let mut vm: VoteMetricVariant  = match mode {
+            // Construct enum variants instead of Box::new()
+            ConflcitMode::JaccardUp => VoteMetricVariant::JaccardUp(vote_metric::SimilarityStruct::<JaccardVoteMetric<UpVoteSelector>>::from_single_submission(submission_id, all_ids)),
+            ConflcitMode::JaccardExpanded => VoteMetricVariant::JaccardExpanded(vote_metric::SimilarityStruct::<JaccardVoteMetric<ExpandedVoteSelector>>::from_single_submission(submission_id, all_ids)),
+            ConflcitMode::JaccardExpandedWithoutDown => VoteMetricVariant::JaccardExpandedWithoutDown(vote_metric::SimilarityStruct::<JaccardVoteMetric<ExpandedWithoutDownVoteSelector>>::from_single_submission(submission_id, all_ids)),
+            ConflcitMode::SupportUp => VoteMetricVariant::SupportUp(vote_metric::SimilarityStruct::<SupportVoteMetric<UpVoteSelector>>::from_single_submission(submission_id, all_ids)),
+            ConflcitMode::SupportExpanded => VoteMetricVariant::SupportExpanded(vote_metric::SimilarityStruct::<SupportVoteMetric<ExpandedVoteSelector>>::from_single_submission(submission_id, all_ids)),
+            ConflcitMode::SupportExpandedWithoutDown => VoteMetricVariant::SupportExpandedWithoutDown(vote_metric::SimilarityStruct::<SupportVoteMetric<ExpandedWithoutDownVoteSelector>>::from_single_submission(submission_id, all_ids)),
+            ConflcitMode::SupportWeightedUp => VoteMetricVariant::SupportWeightedUp(vote_metric::SimilarityStruct::<WeightedSupportMetric<UpVoteSelector>>::from_single_submission(submission_id, all_ids)),
+            ConflcitMode::SupportWeightedExpanded => VoteMetricVariant::SupportWeightedExpanded(vote_metric::SimilarityStruct::<WeightedSupportMetric<ExpandedVoteSelector>>::from_single_submission(submission_id, all_ids)),
+            ConflcitMode::SupportWeightedExpandedWithoutDown => VoteMetricVariant::SupportWeightedExpandedWithoutDown(vote_metric::SimilarityStruct::<WeightedSupportMetric<ExpandedWithoutDownVoteSelector>>::from_single_submission(submission_id, all_ids)),
+            ConflcitMode::LiftUp => VoteMetricVariant::LiftUp(vote_metric::SimilarityStruct::<LiftVoteMetric<UpVoteSelector>>::from_single_submission(submission_id, all_ids)),
+            ConflcitMode::LiftExpanded => VoteMetricVariant::LiftExpanded(vote_metric::SimilarityStruct::<LiftVoteMetric<ExpandedVoteSelector>>::from_single_submission(submission_id, all_ids)),
+            ConflcitMode::LiftExpandedWithoutDown => VoteMetricVariant::LiftExpandedWithoutDown(vote_metric::SimilarityStruct::<LiftVoteMetric<ExpandedWithoutDownVoteSelector>>::from_single_submission(submission_id, all_ids)),
+            ConflcitMode::Cosine => VoteMetricVariant::Cosine(vote_metric::SimilarityStruct::<CosineVoteMetric>::from_single_submission(submission_id, all_ids)),
+        };
+        let columns = vm.get_columns();
+        let votes: Vec<Vec<Vec<String>>> = get_vote_columns(
+                    db, 
+                    event, 
+                    columns,
+                ).await?;
+        vm.process_votes(votes);
+        let res = vm.get_item_results(limit as usize);
+        return Ok(SubmissionSimilarityResponse { res });
+                
+        // if total == 0 {
+        //     return Ok(SubmissionSimilarityResponse{res: vec![]});
+        // }
             
     }
 
@@ -895,108 +1011,34 @@ impl Query {
                 )
                 .all(db)
                 .await?;
-            let mut all_conflict_fullcodes: HashMap<String, usize> = HashMap::new();
-            let mut index:usize = 0;
-            for fullcode in submission_conflicts.iter() {
-                if !all_conflict_fullcodes.contains_key(&fullcode.fullcode_a) {
-                    all_conflict_fullcodes.insert(fullcode.fullcode_a.clone(), index);
-                    index +=1;
-                }
-                if !all_conflict_fullcodes.contains_key(&fullcode.fullcode_b) {
-                    all_conflict_fullcodes.insert(fullcode.fullcode_b.clone(), index);
-                    index +=1;
-                }
-            }
-            let mut state = submission_conflicts.into_iter().map(|i| ConflictState {
-                index_a: all_conflict_fullcodes.get(&i.fullcode_a).unwrap().clone(),
-                index_b: all_conflict_fullcodes.get(&i.fullcode_b).unwrap().clone(),
-                fullcode_a: i.fullcode_a,
-                fullcode_b: i.fullcode_b,
-                count_joint: 0,
-                count_total: 0,
-            }).collect::<Vec<ConflictState>>();
-            let maxsize = index;
-            let mut exists = bitvec![0;maxsize];
-            match mode {
-                ConflcitMode::ExpandedWithoutDown => {
-                    let votes: Vec<(Vec<String>,Vec<String>)> = vote::Entity::find()
-                        .filter(vote::Column::Event.eq(event))
-                        .select_only()
-                        .columns([vote::Column::Expanded, vote::Column::Down])
-                        .into_tuple()
-                        .all(db)
-                        .await?;
                 
-                    for (expanded, down) in votes.iter() {
-                        exists.set_elements(0);
-                        
-                        for code in expanded.iter() {
-                            match all_conflict_fullcodes.get(code) {
-                                Some(idx) => exists.set(*idx,true),
-                                None => ()
-                            }
-                        }
-                        for code in down.iter() {
-                            match all_conflict_fullcodes.get(code) {
-                                Some(idx) => exists.set(*idx,false),
-                                None => ()
-                            }
-                        }
-                        for s in state.iter_mut() {
-                            let a_in = exists[s.index_a];
-                            let b_in = exists[s.index_b];
-                            if (a_in)||(b_in) {
-                                s.count_total += 1;
-                            }
-                            if (a_in)&&(b_in) {
-                                s.count_joint += 1;
-                            }
-                        }
-                    }
-                },
-                _ => {
-                    let votes: Vec<(Vec<String>,)> = vote::Entity::find()
-                        .filter(vote::Column::Event.eq(event))
-                        .select_only()
-                        .column(if mode == ConflcitMode::Up {vote::Column::Up} else { vote::Column::Expanded})
-                        .into_tuple()
-                        .all(db)
-                        .await?;
-                
-                    for v in votes.iter() {
-                        exists.set_elements(0);
-                        for code in v.0.iter() {
-                            match all_conflict_fullcodes.get(code) {
-                                Some(idx) => exists.set(*idx,true),
-                                None => ()
-                            }
-                        }
-                        for s in state.iter_mut() {
-                            let a_in = exists[s.index_a];
-                            let b_in = exists[s.index_b];
-                            if (a_in)||(b_in) {
-                                s.count_total += 1;
-                            }
-                            if (a_in)&&(b_in) {
-                                s.count_joint += 1;
-                            }
-                        }
-                    }
+        let mut vm: VoteMetricVariant  = match mode {
+            // Construct enum variants instead of Box::new()
+            ConflcitMode::JaccardUp => VoteMetricVariant::JaccardUp(vote_metric::SimilarityStruct::<JaccardVoteMetric<UpVoteSelector>>::from_query_results(submission_conflicts)),
+            ConflcitMode::JaccardExpanded => VoteMetricVariant::JaccardExpanded(vote_metric::SimilarityStruct::<JaccardVoteMetric<ExpandedVoteSelector>>::from_query_results(submission_conflicts)),
+            ConflcitMode::JaccardExpandedWithoutDown => VoteMetricVariant::JaccardExpandedWithoutDown(vote_metric::SimilarityStruct::<JaccardVoteMetric<ExpandedWithoutDownVoteSelector>>::from_query_results(submission_conflicts)),
+            ConflcitMode::SupportUp => VoteMetricVariant::SupportUp(vote_metric::SimilarityStruct::<SupportVoteMetric<UpVoteSelector>>::from_query_results(submission_conflicts)),
+            ConflcitMode::SupportExpanded => VoteMetricVariant::SupportExpanded(vote_metric::SimilarityStruct::<SupportVoteMetric<ExpandedVoteSelector>>::from_query_results(submission_conflicts)),
+            ConflcitMode::SupportExpandedWithoutDown => VoteMetricVariant::SupportExpandedWithoutDown(vote_metric::SimilarityStruct::<SupportVoteMetric<ExpandedWithoutDownVoteSelector>>::from_query_results(submission_conflicts)),
+            ConflcitMode::SupportWeightedUp => VoteMetricVariant::SupportWeightedUp(vote_metric::SimilarityStruct::<WeightedSupportMetric<UpVoteSelector>>::from_query_results(submission_conflicts)),
+            ConflcitMode::SupportWeightedExpanded => VoteMetricVariant::SupportWeightedExpanded(vote_metric::SimilarityStruct::<WeightedSupportMetric<ExpandedVoteSelector>>::from_query_results(submission_conflicts)),
+            ConflcitMode::SupportWeightedExpandedWithoutDown => VoteMetricVariant::SupportWeightedExpandedWithoutDown(vote_metric::SimilarityStruct::<WeightedSupportMetric<ExpandedWithoutDownVoteSelector>>::from_query_results(submission_conflicts)),
+            ConflcitMode::LiftUp => VoteMetricVariant::LiftUp(vote_metric::SimilarityStruct::<LiftVoteMetric<UpVoteSelector>>::from_query_results(submission_conflicts)),
+            ConflcitMode::LiftExpanded => VoteMetricVariant::LiftExpanded(vote_metric::SimilarityStruct::<LiftVoteMetric<ExpandedVoteSelector>>::from_query_results(submission_conflicts)),
+            ConflcitMode::LiftExpandedWithoutDown => VoteMetricVariant::LiftExpandedWithoutDown(vote_metric::SimilarityStruct::<LiftVoteMetric<ExpandedWithoutDownVoteSelector>>::from_query_results(submission_conflicts)),
+            ConflcitMode::Cosine => VoteMetricVariant::Cosine(vote_metric::SimilarityStruct::<CosineVoteMetric>::from_query_results(submission_conflicts)),
+        };
+        let columns = vm.get_columns();
+        let votes: Vec<Vec<Vec<String>>> = get_vote_columns(
+                    db, 
+                    event, 
+                    columns,
+                ).await?;
+        vm.process_votes(votes);
+        let res = vm.get_results(limit as usize);
+        return Ok(EventConflictResponse { res: res })
 
-                }
-            }
-            
-            let results = state.into_iter().map(|s| EventConflictItem {
-                a: s.fullcode_a,
-                b: s.fullcode_b,
-                correlation: if s.count_total > 0 { (s.count_joint as f64)/(s.count_total as f64)} else {0.0},
-            })
-            .sorted_by(|a,b| b.correlation.total_cmp(&a.correlation))
-            .take(limit as usize)
-            .collect();
-
-            return Ok(EventConflictResponse{res: results});
-            }
+    }
 
     pub async fn get_event_ratings(db: &DbConn, event: i32) -> Result<EventRatingsResponse, DbErr> {
         let res = EvenRatingQueryItem::find_by_statement(Statement::from_sql_and_values(
@@ -1078,6 +1120,158 @@ impl Query {
     }
 }
 
+// fn generate_simple_conflict_response(limit: u32, state: Vec<ConflictState>) -> EventConflictResponse {
+//     let results = state.into_iter().map(|s| EventConflictItem {
+//         a: s.fullcode_a,
+//         b: s.fullcode_b,
+//         correlation: if s.count_total > 0 { (s.count_joint as f64)/(s.count_total as f64)} else {0.0},
+//     })
+//     .sorted_by(|a,b| b.correlation.total_cmp(&a.correlation))
+//     .take(limit as usize)
+//     .collect();
+//     let res = EventConflictResponse{res: results};
+//     return res;
+// }
+
+// fn generate_weighted_conflict_response(limit: u32, state: Vec<WeightedConflictState>) -> EventConflictResponse {
+//     let results = state.into_iter().map(|s| EventConflictItem {
+//         a: s.fullcode_a,
+//         b: s.fullcode_b,
+//         correlation: s.votes,
+//     })
+//     .sorted_by(|a,b| b.correlation.total_cmp(&a.correlation))
+//     .take(limit as usize)
+//     .collect();
+//     let res = EventConflictResponse{res: results};
+//     return res;
+// }
+
+// fn create_simple_conflict_state_vector(submission_conflicts: Vec<SubmissionConflictQueryItem>, all_conflict_fullcodes: &HashMap<String, usize>) -> Vec<ConflictState> {
+//     let mut state = submission_conflicts.into_iter().map(|i| ConflictState {
+//         index_a: all_conflict_fullcodes.get(&i.fullcode_a).unwrap().clone(),
+//         index_b: all_conflict_fullcodes.get(&i.fullcode_b).unwrap().clone(),
+//         fullcode_a: i.fullcode_a,
+//         fullcode_b: i.fullcode_b,
+//         count_joint: 0,
+//         count_total: 0,
+//     }).collect::<Vec<ConflictState>>();
+//     state
+// }
+
+// fn create_view_conflict_state_vector(submission_conflicts: Vec<SubmissionConflictQueryItem>, all_conflict_fullcodes: &HashMap<String, usize>) -> Vec<ViewConflictState> {
+//     let mut state = submission_conflicts.into_iter().map(|i| ViewConflictState {
+//         index_a: all_conflict_fullcodes.get(&i.fullcode_a).unwrap().clone(),
+//         index_b: all_conflict_fullcodes.get(&i.fullcode_b).unwrap().clone(),
+//         fullcode_a: i.fullcode_a,
+//         fullcode_b: i.fullcode_b,
+//         up_joint: 0,
+//         view_joint: 0,
+//     }).collect::<Vec<ViewConflictState>>();
+//     state
+// }
+
+// fn create_weighted_conflict_state_vector(submission_conflicts: Vec<SubmissionConflictQueryItem>, all_conflict_fullcodes: &HashMap<String, usize>) -> Vec<WeightedConflictState> {
+//     let mut state = submission_conflicts.into_iter().map(|i| WeightedConflictState {
+//         index_a: all_conflict_fullcodes.get(&i.fullcode_a).unwrap().clone(),
+//         index_b: all_conflict_fullcodes.get(&i.fullcode_b).unwrap().clone(),
+//         fullcode_a: i.fullcode_a,
+//         fullcode_b: i.fullcode_b,
+//         votes: 0.0,
+//     }).collect::<Vec<WeightedConflictState>>();
+//     state
+// }
+
+// fn create_cosine_conflict_state_vector(submission_conflicts: Vec<SubmissionConflictQueryItem>, all_conflict_fullcodes: &HashMap<String, usize>) -> Vec<CosineConflictState> {
+//     let mut state = submission_conflicts.into_iter().map(|i| CosineConflictState {
+//         index_a: all_conflict_fullcodes.get(&i.fullcode_a).unwrap().clone(),
+//         index_b: all_conflict_fullcodes.get(&i.fullcode_b).unwrap().clone(),
+//         fullcode_a: i.fullcode_a,
+//         fullcode_b: i.fullcode_b,
+//         dotprod: 0,
+//         norm_a: 0,
+//         norm_b: 0,
+//     }).collect::<Vec<CosineConflictState>>();
+//     state
+// }
+
+// fn apply_map_to_bitset(all_conflict_fullcodes: &HashMap<String, usize>, exists: &mut BitVec, column: &Vec<String>, value: bool) {
+//     for code in column.iter() {
+//         match all_conflict_fullcodes.get(code) {
+//             Some(idx) => exists.set(*idx,value),
+//             None => ()
+//         }
+//     }
+// }
+
+// fn into_similarity_response<T: Iterator<Item=(String, f64)>>(results: T, limit: usize) -> SubmissionSimilarityResponse {
+//     let resvec = results.sorted_by(|(_k1, a), (_k2,b)| b.partial_cmp(a).unwrap())
+//         .take(limit as usize)
+//         .map(|(k,v)| SubmissionSimilarityItem{ id: k, metric: v})
+//         .collect::<Vec<_>>();
+//     let res = SubmissionSimilarityResponse{res: resvec};
+//     return res;
+// }
+
+// fn get_cosine_weight(submission_id: &String, expmap: &HashSet<String>, downmap: &HashSet<String>, upmap: &HashSet<String>) -> i32 {
+//     let target_weigth = if downmap.contains(submission_id) { -4 } else if upmap.contains(submission_id) { 4 } else if expmap.contains(submission_id) {1} else {0};
+//     target_weigth
+// }
+
+// fn create_empty_hash_map<'a, T: IntoIterator<Item=&'a String>, U:Default>(all_ids: T) -> HashMap<String, U> {
+//     let iter = all_ids.into_iter();
+//     let mut normmap = HashMap::with_capacity(iter.size_hint().0);
+//     iter.for_each(|id| {normmap.insert(id.clone(), U::default());});
+//     normmap
+// }
+
+async fn get_all_ids_for_event(db: &DatabaseConnection, event: i32, submission_id: &String) -> Result<Vec<String>, DbErr> {
+    let all_submissions = source::Entity::find()
+        .find_with_related(submission::Entity)
+        .filter(source::Column::Event.eq(event))
+        .all(db)
+        .await?;
+    let all_ids = all_submissions
+        .iter()
+        .map(
+            |(so, su)| su
+                .into_iter()
+                .map(
+                    |s| format!("{}/{}", so.slug, s.code)
+                )
+            )
+        .flatten()
+        .filter(|x| *submission_id != *x)
+        .collect::<Vec<String>>();
+    Ok(all_ids)
+}
+
+async fn get_vote_columns(db: &DatabaseConnection, event: i32, colums: Vec<vote::Column>) -> Result<Vec<Vec<Vec<String>>>, DbErr> {
+    let num_columns = colums.len();
+    
+    let query = vote::Entity::find()
+        .filter(vote::Column::Event.eq(event))
+        .select_only()
+        .columns(colums);
+    let backend = db.get_database_backend();
+    let statement = query.build(backend);
+    let query_results: Vec<QueryResult> = db.query_all(statement).await?;
+
+    let mut final_results: Vec<Vec<Vec<String>>> = Vec::new();
+
+    for row in query_results {
+        let mut row_vec: Vec<Vec<String>> = Vec::with_capacity(num_columns);
+        for i in 0..num_columns {
+            let value: Vec<String> = row.try_get_by_index(i)
+                .map_err(|e| DbErr::TryIntoErr { from: "QueryResult", into: "String", source: Box::new(e) })?;
+            row_vec.push(value);
+        }
+        final_results.push(row_vec);
+    }
+
+
+    Ok(final_results)
+}
+
 fn source_response_from_model(m: source::Model) -> Result<SourceResponseItem, DbErr> {
     Ok(SourceResponseItem {
         autoupdate: m.autoupdate,
@@ -1096,3 +1290,8 @@ fn get_filter(m: Option<i32>) -> Result<Option<SourceFilter>, DbErr> {
         .transpose()
         .map_err(|e| DbErr::Custom(format!("Can't convert filter: {}", e)))
 }
+
+// fn get_cosine_weight_cond(up: bool, down: bool, expanded: bool) -> i32 {
+//     let weight = if up { 4 } else if down {-4} else if expanded {1} else {0};
+//     return weight;
+// }
