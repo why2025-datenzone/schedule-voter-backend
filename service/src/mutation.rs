@@ -185,7 +185,7 @@ impl Mutation {
                             } else {
                                 let startdiff = old.start.unwrap().and_utc() - scheduled_time.start;
                                 let enddiff = old.end.unwrap().and_utc() - scheduled_time.end.to_utc();
-                                if (startdiff.num_milliseconds() > 500) || (enddiff.num_milliseconds() > 500) || (old.room != newroom) {
+                                if (startdiff.num_milliseconds().abs() > 500) || (enddiff.num_milliseconds().abs() > 500) || (old.room != newroom) {
                                     Some(submission::ActiveModel {
                                         code: Set(code.clone()),
                                         title: NotSet,
